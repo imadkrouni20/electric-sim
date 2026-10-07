@@ -1,0 +1,1552 @@
+/* ==================== 3D Simulator — Part A: Core ==================== */
+var THREE = null;
+var scene3d, camera3d, renderer3d, bGroup3d, wireGroup3d;
+var walls3d = [], ceils3d = [], comps3d = [], wireMeshes3d = [], currentDots = [];
+var comps3dById = {};
+var lightSources = [];
+
+var orbit3d = { theta: Math.PI * 0.3, phi: Math.PI * 0.35, radius: 30 };
+var walk3d = { pos: null, yaw: 0, pitch: 0 };
+var moveVec3d = { x: 0, y: 0 };
+var lookVec3d = { x: 0, y: 0 };
+var camMode3d = 'orbit';
+var floorView3d = 0;
+var powerOn = true;
+var currentSpeed = 1.5;
+var _lastT = 0;
+
+function initThree3D(){
+  if(scene3d){ build3D(); updateCam3d(); animate3D(); return; }
+  import('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js')
+    .then(function(mod){
+      THREE = mod;
+      _realInit3D();
+    }).catch(function(err){
+      console.error(err);
+      alert('فشل تحميل Three.js — تحقق من الإنترنت');
+    });
+}
+
+function _realInit3D(){
+  var cv = document.getElementById('scene3d');
+  scene3d = new THREE.Scene();
+  scene3d.background = new THREE.Color(0x0a0e1a);
+  scene3d.fog = new THREE.Fog(0x0a0e1a, 40, 120);
+
+  camera3d = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.05, 500);
+
+  renderer3d = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
+  renderer3d.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer3d.setSize(innerWidth, innerHeight);
+  renderer3d.shadowMap.enabled = true;
+  renderer3d.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  /* ambient — bright during day simulation */
+  scene3d.add(new THREE.AmbientLight(0xffffff, 0.55));
+  scene3d.add(new THREE.HemisphereLight(0xaaccff, 0x334455, 0.4));
+
+  /* sun */
+  var sun = new THREE.DirectionalLight(0xffffff, 0.85);
+  sun.position.set(20, 30, 15);
+  sun.castShadow = true;
+  sun.shadow.camera.left = -30;
+  sun.shadow.camera.right = 30;
+  sun.shadow.camera.top = 30;
+  sun.shadow.camera.bottom = -30;
+  sun.shadow.mapSize.width = 1024;
+  sun.shadow.mapSize.height = 1024;
+  scene3d.add(sun);
+
+  /* inner fill */
+  var fill = new THREE.DirectionalLight(0xffeedd, 0.35);
+  fill.position.set(-15, 20, -10);
+  scene3d.add(fill);
+
+  bGroup3d = new THREE.Group();
+  scene3d.add(bGroup3d);
+
+  wireGroup3d = new THREE.Group();
+  scene3d.add(wireGroup3d);
+
+  walk3d.pos = new THREE.Vector3(5, 1.65, 5);
+
+  addEventListener('resize', function(){
+    camera3d.aspect = innerWidth / innerHeight;
+    camera3d.updateProjectionMatrix();
+    renderer3d.setSize(innerWidth, innerHeight);
+  });
+
+  setupOrbit3D(cv);
+  setupJoysticks3D();
+  setupKeyboard3D();
+  build3D();
+  updateCam3d();
+  animate3D();
+}
+
+function updateCam3d(){
+  if(!camera3d || !PROJ) return;
+  var bh = PROJ.building.height;
+  if(camMode3d === 'orbit'){
+    camera3d.fov = 60;
+    var fy = floorView3d * bh;
+    var tx = PROJ.building.length / 2;
+    var ty = fy + bh * 0.4;
+    var tz = PROJ.building.width / 2;
+    camera3d.position.set(
+      tx + orbit3d.radius * Math.sin(orbit3d.phi) * Math.cos(orbit3d.theta),
+      ty + orbit3d.radius * Math.cos(orbit3d.phi),
+      tz + orbit3d.radius * Math.sin(orbit3d.phi) * Math.sin(orbit3d.theta)
+    );
+    camera3d.lookAt(tx, ty, tz);
+  } else {
+    camera3d.fov = 75;
+    var dirX = Math.cos(walk3d.pitch) * Math.cos(walk3d.yaw);
+    var dirY = Math.sin(walk3d.pitch);
+    var dirZ = Math.cos(walk3d.pitch) * Math.sin(walk3d.yaw);
+    camera3d.position.copy(walk3d.pos);
+    camera3d.lookAt(
+      walk3d.pos.x + dirX,
+      walk3d.pos.y + dirY,
+      walk3d.pos.z + dirZ
+    );
+  }
+  camera3d.updateProjectionMatrix();
+}
+
+function toggleCam3d(){
+  if(camMode3d === 'orbit'){
+    camMode3d = 'walk';
+    document.getElementById('camBtn').textContent = '🚶';
+    document.getElementById('joyL').style.display = 'flex';
+    document.getElementById('joyR').style.display = 'flex';
+    document.getElementById('exitWalk').classList.add('show');
+    walk3d.pos.set(
+      PROJ.building.length / 2,
+      floorView3d * PROJ.building.height + 1.65,
+      PROJ.building.width / 2
+    );
+    walk3d.yaw = 0;
+    walk3d.pitch = 0;
+  } else {
+    camMode3d = 'orbit';
+    document.getElementById('camBtn').textContent = '🎥';
+    document.getElementById('joyL').style.display = 'none';
+    document.getElementById('joyR').style.display = 'none';
+    document.getElementById('exitWalk').classList.remove('show');
+  }
+  updateCam3d();
+}
+
+function floorUp(){
+  if(!PROJ) return;
+  floorView3d = Math.min(PROJ.building.floors - 1, floorView3d + 1);
+  build3D();
+  updateCam3d();
+}
+function floorDown(){
+  if(!PROJ) return;
+  floorView3d = Math.max(0, floorView3d - 1);
+  build3D();
+  updateCam3d();
+}
+
+/* ==================== Controls ==================== */
+function setupOrbit3D(cv){
+  var pointers = {};
+  var startX = 0, startY = 0, lastX = 0, lastY = 0;
+  var startT = 0, moved = false, lastPinch = 0;
+
+  cv.addEventListener('pointerdown', function(e){
+    pointers[e.pointerId] = true;
+    var n = Object.keys(pointers).length;
+    if(n === 1){
+      startX = lastX = e.clientX;
+      startY = lastY = e.clientY;
+      startT = Date.now();
+      moved = false;
+    } else if(n === 2){
+      lastPinch = 0;
+    }
+  });
+
+  cv.addEventListener('pointermove', function(e){
+    if(!pointers[e.pointerId]) return;
+    var n = Object.keys(pointers).length;
+    if(n === 2) return;
+    if(n === 1){
+      if(!moved && Math.hypot(e.clientX - startX, e.clientY - startY) > 8) moved = true;
+      if(camMode3d === 'orbit' && moved){
+        var dx = e.clientX - lastX, dy = e.clientY - lastY;
+        orbit3d.theta -= dx * 0.008;
+        orbit3d.phi -= dy * 0.008;
+        orbit3d.phi = clamp(orbit3d.phi, 0.15, Math.PI - 0.15);
+        updateCam3d();
+      }
+      lastX = e.clientX; lastY = e.clientY;
+    }
+  });
+
+  cv.addEventListener('pointerup', function(e){
+    var existed = !!pointers[e.pointerId];
+    delete pointers[e.pointerId];
+    if(Object.keys(pointers).length === 0){
+      if(existed && !moved && Date.now() - startT < 350){
+        handleTap3D(e);
+      }
+      moved = false;
+      lastPinch = 0;
+    }
+  });
+
+  cv.addEventListener('pointercancel', function(e){
+    delete pointers[e.pointerId];
+    if(Object.keys(pointers).length === 0){ moved = false; lastPinch = 0; }
+  });
+
+  cv.addEventListener('touchmove', function(e){
+    if(e.touches.length === 2 && camMode3d === 'orbit'){
+      var dx = e.touches[0].clientX - e.touches[1].clientX;
+      var dy = e.touches[0].clientY - e.touches[1].clientY;
+      var d = Math.hypot(dx, dy);
+      if(lastPinch > 0){
+        var delta = d - lastPinch;
+        orbit3d.radius = clamp(orbit3d.radius - delta * 0.06, 3, 120);
+        updateCam3d();
+      }
+      lastPinch = d;
+    }
+  }, { passive: true });
+  cv.addEventListener('touchend', function(){ lastPinch = 0; });
+}
+
+function setupJoysticks3D(){
+  var jL = document.getElementById('joyL'), kL = jL.querySelector('.joyK');
+  var jR = document.getElementById('joyR'), kR = jR.querySelector('.joyK2');
+
+  function bind(joy, knob, onMove, onEnd){
+    var id = null;
+    joy.addEventListener('pointerdown', function(e){
+      id = e.pointerId;
+      try { joy.setPointerCapture(id); } catch(x){}
+    });
+    joy.addEventListener('pointermove', function(e){
+      if(e.pointerId !== id) return;
+      var r = joy.getBoundingClientRect();
+      var dx = e.clientX - (r.left + r.width / 2);
+      var dy = e.clientY - (r.top + r.height / 2);
+      var max = r.width / 2 - 25;
+      var d = Math.hypot(dx, dy);
+      if(d > max){ dx = dx * max / d; dy = dy * max / d; }
+      knob.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+      onMove(dx / max, dy / max);
+    });
+    joy.addEventListener('pointerup', function(){ id = null; knob.style.transform = ''; onEnd(); });
+    joy.addEventListener('pointercancel', function(){ id = null; knob.style.transform = ''; onEnd(); });
+  }
+
+  bind(jL, kL,
+    function(x, y){ moveVec3d.x = x; moveVec3d.y = y; },
+    function(){ moveVec3d.x = 0; moveVec3d.y = 0; });
+  bind(jR, kR,
+    function(x, y){ lookVec3d.x = x; lookVec3d.y = y; },
+    function(){ lookVec3d.x = 0; lookVec3d.y = 0; });
+}
+
+function setupKeyboard3D(){
+  addEventListener('keydown', function(e){
+    if(camMode3d !== 'walk') return;
+    var s = 0.5;
+    var fw = Math.cos(walk3d.yaw), fz = Math.sin(walk3d.yaw);
+    var rx = Math.cos(walk3d.yaw - Math.PI / 2), rz = Math.sin(walk3d.yaw - Math.PI / 2);
+    if(e.key === 'w' || e.key === 'W'){ walk3d.pos.x += fw * s; walk3d.pos.z += fz * s; }
+    if(e.key === 's' || e.key === 'S'){ walk3d.pos.x -= fw * s; walk3d.pos.z -= fz * s; }
+    if(e.key === 'a' || e.key === 'A'){ walk3d.pos.x += rx * s; walk3d.pos.z += rz * s; }
+    if(e.key === 'd' || e.key === 'D'){ walk3d.pos.x -= rx * s; walk3d.pos.z -= rz * s; }
+    if(e.key === 'ArrowLeft') walk3d.yaw -= 0.1;
+    if(e.key === 'ArrowRight') walk3d.yaw += 0.1;
+    if(e.key === 'ArrowUp') walk3d.pitch = Math.min(1.4, walk3d.pitch + 0.1);
+    if(e.key === 'ArrowDown') walk3d.pitch = Math.max(-1.4, walk3d.pitch - 0.1);
+    updateCam3d();
+  });
+}
+
+/* ==================== Part B — Build Building ==================== */
+function build3D(){
+  if(!bGroup3d || !THREE || !PROJ) return;
+  while(bGroup3d.children.length){
+    var ch = bGroup3d.children[0];
+    bGroup3d.remove(ch);
+    ch.traverse(function(o){
+      if(o.geometry) o.geometry.dispose();
+      if(o.material){
+        if(Array.isArray(o.material)) o.material.forEach(function(m){ m.dispose(); });
+        else o.material.dispose();
+      }
+    });
+  }
+  walls3d = []; ceils3d = []; comps3d = []; comps3dById = {}; lightSources = [];
+
+  var b = PROJ.building;
+
+  /* ground plane */
+  var groundGeo = new THREE.PlaneGeometry(b.length + 20, b.width + 20);
+  var groundMat = new THREE.MeshLambertMaterial({ color: 0x1a2030 });
+  var ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.set(b.length / 2, -0.02, b.width / 2);
+  ground.receiveShadow = true;
+  bGroup3d.add(ground);
+
+  /* per-floor */
+  for(var f = 0; f < PROJ.floors.length; f++){
+    var fd = PROJ.floors[f];
+    var floorY = fd.level * b.height;
+
+    /* floor slab */
+    var fGeo = new THREE.PlaneGeometry(b.length, b.width);
+    var fMat = new THREE.MeshLambertMaterial({
+      color: hexToInt(b.floorColor),
+      side: THREE.DoubleSide
+    });
+    var fmesh = new THREE.Mesh(fGeo, fMat);
+    fmesh.rotation.x = -Math.PI / 2;
+    fmesh.position.set(b.length / 2, floorY + 0.005, b.width / 2);
+    fmesh.receiveShadow = true;
+    bGroup3d.add(fmesh);
+
+    /* room floors with color */
+    fd.rooms.forEach(function(room){
+      var rg = new THREE.PlaneGeometry(room.w - 0.02, room.h - 0.02);
+      var rc = new THREE.Color(room.color).multiplyScalar(0.7);
+      var rm = new THREE.MeshLambertMaterial({ color: rc, side: THREE.DoubleSide });
+      var rmesh = new THREE.Mesh(rg, rm);
+      rmesh.rotation.x = -Math.PI / 2;
+      rmesh.position.set(room.x + room.w / 2, floorY + 0.015, room.y + room.h / 2);
+      bGroup3d.add(rmesh);
+    });
+
+    /* walls */
+    fd.walls.forEach(function(w){
+      var segs = splitWallByOpenings(w);
+      segs.forEach(function(s){
+        addWallSegment(s, w, fd.level);
+      });
+      /* openings - doors & windows as 3D */
+      w.openings.forEach(function(o){
+        addOpening3D(w, o, fd.level);
+      });
+    });
+
+    /* ceilings (semi-transparent) */
+    fd.rooms.forEach(function(room){
+      var cg = new THREE.PlaneGeometry(room.w - 0.05, room.h - 0.05);
+      var cm = new THREE.MeshLambertMaterial({
+        color: hexToInt(b.ceilColor),
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.15,
+        depthWrite: false
+      });
+      var cmesh = new THREE.Mesh(cg, cm);
+      cmesh.rotation.x = Math.PI / 2;
+      cmesh.position.set(room.x + room.w / 2, (fd.level + 1) * b.height - 0.02, room.y + room.h / 2);
+      cmesh.userData = { type: 'ceiling', room: room, floor: fd.level };
+      bGroup3d.add(cmesh);
+      ceils3d.push(cmesh);
+    });
+
+    /* stairs */
+    fd.stairs.forEach(function(s){
+      addStair3D(s, fd.level);
+    });
+  }
+
+  /* components 3D */
+  buildAllComps3D();
+
+  /* wires if there are circuits */
+  if(PROJ.panels.length && PROJ.panels[0].circuits.length){
+    rebuildWires3D();
+  }
+}
+
+function splitWallByOpenings(wall){
+  var dx = wall.x2 - wall.x1, dz = wall.y2 - wall.y1;
+  var L = Math.hypot(dx, dz);
+  if(L < 0.01) return [];
+  var ux = dx / L, uz = dz / L;
+  var H = PROJ.building.height;
+
+  var ops = wall.openings.map(function(o){
+    var oc = o.t * L;
+    return {
+      start: Math.max(0, oc - o.w / 2),
+      end: Math.min(L, oc + o.w / 2),
+      y0: o.type === 'window' ? (o.sill || 0.9) : 0,
+      y1: o.type === 'window' ? (o.sill || 0.9) + o.h : o.h
+    };
+  }).sort(function(a, b){ return a.start - b.start; });
+
+  var segs = [], cur = 0;
+  ops.forEach(function(o){
+    if(o.start > cur + 0.01) segs.push({ a: cur, b: o.start, y0: 0, y1: H });
+    if(o.y1 < H - 0.01) segs.push({ a: o.start, b: o.end, y0: o.y1, y1: H });
+    if(o.y0 > 0.01) segs.push({ a: o.start, b: o.end, y0: 0, y1: o.y0 });
+    cur = Math.max(cur, o.end);
+  });
+  if(cur < L - 0.01) segs.push({ a: cur, b: L, y0: 0, y1: H });
+
+  return segs.map(function(s){
+    return {
+      x1: wall.x1 + ux * s.a, z1: wall.y1 + uz * s.a,
+      x2: wall.x1 + ux * s.b, z2: wall.y1 + uz * s.b,
+      y0: s.y0, y1: s.y1
+    };
+  });
+}
+
+function addWallSegment(seg, wall, floorLevel){
+  var dx = seg.x2 - seg.x1, dz = seg.z2 - seg.z1;
+  var L = Math.hypot(dx, dz);
+  if(L < 0.01) return;
+  var h = seg.y1 - seg.y0;
+  if(h < 0.01) return;
+
+  var geo = new THREE.BoxGeometry(L, h, wall.thickness);
+  var mat = new THREE.MeshPhongMaterial({
+    color: hexToInt(PROJ.building.wallColor),
+    shininess: 10,
+    flatShading: false
+  });
+  var mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(
+    (seg.x1 + seg.x2) / 2,
+    floorLevel * PROJ.building.height + seg.y0 + h / 2,
+    (seg.z1 + seg.z2) / 2
+  );
+  mesh.rotation.y = -Math.atan2(dz, dx);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.userData = { type: 'wall', wall: wall, floor: floorLevel };
+  bGroup3d.add(mesh);
+  walls3d.push(mesh);
+}
+
+function addOpening3D(wall, op, floorLevel){
+  var dx = wall.x2 - wall.x1, dz = wall.y2 - wall.y1;
+  var L = Math.hypot(dx, dz);
+  var ux = dx / L, uz = dz / L;
+  var nx = -uz, nz = ux;
+  var cx = wall.x1 + op.t * dx;
+  var cz = wall.y1 + op.t * dz;
+  var baseY = floorLevel * PROJ.building.height;
+  var yBot = baseY + (op.type === 'window' ? (op.sill || 0.9) : 0);
+  var yTop = yBot + op.h;
+  var midY = (yBot + yTop) / 2;
+  var angle = -Math.atan2(uz, ux);
+  var th = wall.thickness + 0.02;
+
+  if(op.type === 'door'){
+    /* frame color */
+    var fMat = new THREE.MeshPhongMaterial({
+      color: hexToInt(op.color || '#8b5a2b'),
+      shininess: 30
+    });
+
+    /* top frame */
+    var top = new THREE.Mesh(new THREE.BoxGeometry(op.w, 0.05, th), fMat);
+    top.position.set(cx, yTop - 0.025, cz);
+    top.rotation.y = angle;
+    top.castShadow = true;
+    bGroup3d.add(top);
+
+    /* side frames */
+    var left = new THREE.Mesh(new THREE.BoxGeometry(0.05, op.h, th), fMat);
+    left.position.set(cx - ux * op.w / 2, midY, cz - uz * op.w / 2);
+    left.rotation.y = angle;
+    bGroup3d.add(left);
+
+    var right = new THREE.Mesh(new THREE.BoxGeometry(0.05, op.h, th), fMat);
+    right.position.set(cx + ux * op.w / 2, midY, cz + uz * op.w / 2);
+    right.rotation.y = angle;
+    bGroup3d.add(right);
+
+    /* leaf (slightly open) */
+    var leaf = new THREE.Mesh(
+      new THREE.BoxGeometry(op.w - 0.1, op.h - 0.1, 0.04),
+      new THREE.MeshPhongMaterial({ color: hexToInt(op.color || '#8b5a2b'), shininess: 60 })
+    );
+    var leafAngle = angle + 0.55;
+    var hingeX = cx - ux * op.w / 2;
+    var hingeZ = cz - uz * op.w / 2;
+    var halfW = op.w / 2 - 0.05;
+    leaf.position.set(
+      hingeX + Math.cos(-leafAngle) * halfW,
+      midY,
+      hingeZ + Math.sin(-leafAngle) * halfW
+    );
+    leaf.rotation.y = leafAngle;
+    leaf.castShadow = true;
+    bGroup3d.add(leaf);
+
+    /* handle */
+    var handle = new THREE.Mesh(
+      new THREE.SphereGeometry(0.028, 10, 8),
+      new THREE.MeshPhongMaterial({ color: 0xd4af37, shininess: 200 })
+    );
+    var hx = cx + ux * (op.w / 2 - 0.12);
+    var hz = cz + uz * (op.w / 2 - 0.12);
+    handle.position.set(hx, midY, hz);
+    bGroup3d.add(handle);
+  } else {
+    /* window frame */
+    var wMat = new THREE.MeshPhongMaterial({
+      color: hexToInt(op.color || '#8b5a2b'),
+      shininess: 60
+    });
+    var glassMat = new THREE.MeshPhongMaterial({
+      color: hexToInt(op.glassColor || '#a8d8ff'),
+      transparent: true,
+      opacity: 0.4,
+      shininess: 200
+    });
+
+    /* glass */
+    var glass = new THREE.Mesh(
+      new THREE.BoxGeometry(op.w - 0.04, op.h - 0.04, 0.012),
+      glassMat
+    );
+    glass.position.set(cx, midY, cz);
+    glass.rotation.y = angle;
+    bGroup3d.add(glass);
+
+    /* frame */
+    var fth = 0.05;
+    var fH1 = new THREE.Mesh(new THREE.BoxGeometry(op.w, fth, th), wMat);
+    fH1.position.set(cx, yTop - fth / 2, cz);
+    fH1.rotation.y = angle;
+    bGroup3d.add(fH1);
+
+    var fH2 = new THREE.Mesh(new THREE.BoxGeometry(op.w, fth, th), wMat);
+    fH2.position.set(cx, yBot + fth / 2, cz);
+    fH2.rotation.y = angle;
+    bGroup3d.add(fH2);
+
+    var fV1 = new THREE.Mesh(new THREE.BoxGeometry(fth, op.h, th), wMat);
+    fV1.position.set(cx - ux * op.w / 2 + ux * fth / 2, midY, cz - uz * op.w / 2 + uz * fth / 2);
+    fV1.rotation.y = angle;
+    bGroup3d.add(fV1);
+
+    var fV2 = new THREE.Mesh(new THREE.BoxGeometry(fth, op.h, th), wMat);
+    fV2.position.set(cx + ux * op.w / 2 - ux * fth / 2, midY, cz + uz * op.w / 2 - uz * fth / 2);
+    fV2.rotation.y = angle;
+    bGroup3d.add(fV2);
+
+    /* mullion */
+    var mullion = new THREE.Mesh(new THREE.BoxGeometry(0.025, op.h, th * 0.6), wMat);
+    mullion.position.set(cx, midY, cz);
+    mullion.rotation.y = angle;
+    bGroup3d.add(mullion);
+  }
+}
+
+function addStair3D(stair, floorLevel){
+  var totalH = PROJ.building.height;
+  var n = stair.steps || 12;
+  var stepH = totalH / n;
+  var stepD = stair.h / n;
+  var mat = new THREE.MeshPhongMaterial({ color: hexToInt(stair.color || '#a08060'), shininess: 20 });
+  var baseY = floorLevel * PROJ.building.height;
+
+  for(var i = 0; i < n; i++){
+    var g = new THREE.BoxGeometry(stair.w - 0.05, stepH, stepD);
+    var m = new THREE.Mesh(g, mat);
+    m.position.set(
+      stair.x + stair.w / 2,
+      baseY + i * stepH + stepH / 2,
+      stair.y + i * stepD + stepD / 2
+    );
+    m.castShadow = true;
+    m.receiveShadow = true;
+    bGroup3d.add(m);
+  }
+}
+
+/* ==================== Part C — 3D Components ==================== */
+function buildAllComps3D(){
+  if(!THREE || !PROJ) return;
+  PROJ.floors.forEach(function(fd){
+    fd.walls.forEach(function(w){
+      ['1', '-1'].forEach(function(sk){
+        var face = w.faces[sk];
+        if(!face) return;
+        face.components.forEach(function(c){
+          var obj = makeWallComp3D(c, w, fd.level);
+          bGroup3d.add(obj);
+          comps3d.push(obj);
+          comps3dById[c.id] = obj;
+        });
+      });
+    });
+    fd.rooms.forEach(function(room){
+      var cc = room.ceilingComponents || [];
+      cc.forEach(function(x){
+        var obj = makeCeilComp3D(x, room, fd.level);
+        bGroup3d.add(obj);
+        comps3d.push(obj);
+        comps3dById[x.id] = obj;
+      });
+    });
+  });
+}
+
+function makeWallComp3D(comp, wall, floorLevel){
+  var g = new THREE.Group();
+  var pos = wallComp3DPos(comp, wall, floorLevel);
+  g.position.set(pos.x, pos.y, pos.z);
+  g.rotation.y = pos.angle;
+
+  var color = hexToInt(comp.color || '#f59e0b');
+  var white = new THREE.MeshPhongMaterial({ color: 0xffffff, shininess: 80 });
+  var metal = new THREE.MeshPhongMaterial({ color: 0xd4d4d4, shininess: 200 });
+  var dark = new THREE.MeshBasicMaterial({ color: 0x0a0a0a });
+  var body;
+
+  if(comp.type === 'socket' || comp.type === 'socket2' ||
+     comp.type === 'tv' || comp.type === 'net' || comp.type === 'phone' || comp.type === 'thermo'){
+    var ww = comp.type === 'socket2' ? 0.16 : 0.086;
+    var plate = new THREE.Mesh(new THREE.BoxGeometry(ww, 0.086, 0.014), white);
+    plate.position.z = 0.007;
+    g.add(plate);
+
+    var center = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.024, 0.024, 0.008, 16),
+      new THREE.MeshPhongMaterial({ color: color, shininess: 100 })
+    );
+    center.rotation.x = Math.PI / 2;
+    center.position.z = 0.018;
+    g.add(center);
+
+    /* contact holes */
+    var holeMat = new THREE.MeshBasicMaterial({ color: 0x050505 });
+    var holeGeo = new THREE.CylinderGeometry(0.003, 0.003, 0.005, 8);
+    for(var i = 0; i < 3; i++){
+      var hole = new THREE.Mesh(holeGeo, holeMat);
+      hole.rotation.x = Math.PI / 2;
+      if(i === 0) hole.position.set(-0.009, 0, 0.024);
+      if(i === 1) hole.position.set(0.009, 0, 0.024);
+      if(i === 2) hole.position.set(0, 0.024, 0.024);
+      g.add(hole);
+    }
+  }
+  else if(comp.type === 'switch' || comp.type === 'switch2' || comp.type === 'vav'){
+    var ww2 = comp.type === 'switch' ? 0.086 : 0.16;
+    var plate2 = new THREE.Mesh(new THREE.BoxGeometry(ww2, 0.086, 0.014), white);
+    plate2.position.z = 0.007;
+    g.add(plate2);
+
+    var count = (comp.type === 'vav' || comp.type === 'switch2') ? 2 : 1;
+    for(var j = 0; j < count; j++){
+      var btn = new THREE.Mesh(
+        new THREE.BoxGeometry(count > 1 ? 0.028 : 0.05, 0.05, 0.012),
+        new THREE.MeshPhongMaterial({ color: 0xf0f0f0, shininess: 60 })
+      );
+      btn.position.set(count > 1 ? (j - 0.5) * 0.033 : 0, 0, 0.017);
+      g.add(btn);
+    }
+  }
+  else if(comp.type === 'sconce'){
+    var arm = new THREE.Mesh(
+      new THREE.BoxGeometry(0.03, 0.03, 0.14),
+      new THREE.MeshPhongMaterial({ color: 0x777777, shininess: 100 })
+    );
+    arm.position.z = 0.07;
+    g.add(arm);
+
+    var shadeMat = new THREE.MeshPhongMaterial({
+      color: 0xfff0c0,
+      emissive: 0x997700,
+      emissiveIntensity: powerOn ? 0.8 : 0.1,
+      side: THREE.DoubleSide
+    });
+    var shade = new THREE.Mesh(
+      new THREE.SphereGeometry(0.09, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+      shadeMat
+    );
+    shade.position.set(0, 0.08, 0.14);
+    g.add(shade);
+
+    var bulb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.032, 10, 8),
+      new THREE.MeshBasicMaterial({ color: powerOn ? 0xffeecc : 0x554422 })
+    );
+    bulb.position.set(0, 0.08, 0.14);
+    g.add(bulb);
+    lightSources.push(bulb);
+  }
+  else if(comp.type === 'panel'){
+    /* inner box */
+    var frame = new THREE.Mesh(
+      new THREE.BoxGeometry(0.54, 0.64, 0.02),
+      new THREE.MeshPhongMaterial({ color: 0x333333, shininess: 40 })
+    );
+    frame.position.z = 0.01;
+    g.add(frame);
+
+    var body2 = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.6, 0.14),
+      new THREE.MeshPhongMaterial({ color: 0xf0f0f0, shininess: 80 })
+    );
+    body2.position.z = 0.08;
+    g.add(body2);
+
+    var door = new THREE.Mesh(
+      new THREE.BoxGeometry(0.44, 0.54, 0.008),
+      new THREE.MeshPhongMaterial({ color: 0xfbfbfb })
+    );
+    door.position.z = 0.153;
+    g.add(door);
+
+    var handle = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.008, 0.008, 0.06, 8),
+      new THREE.MeshPhongMaterial({ color: 0xd4af37, shininess: 200 })
+    );
+    handle.rotation.z = Math.PI / 2;
+    handle.position.set(0.19, 0, 0.158);
+    g.add(handle);
+
+    var led = new THREE.Mesh(
+      new THREE.BoxGeometry(0.14, 0.03, 0.003),
+      new THREE.MeshBasicMaterial({ color: 0x00ddff })
+    );
+    led.position.set(-0.12, 0.24, 0.158);
+    g.add(led);
+
+    /* small breakers visible inside */
+    for(var k = 0; k < 6; k++){
+      var brk = new THREE.Mesh(
+        new THREE.BoxGeometry(0.014, 0.04, 0.008),
+        new THREE.MeshPhongMaterial({ color: 0x1a1a1a })
+      );
+      brk.position.set(-0.15 + k * 0.06, -0.05, 0.158);
+      g.add(brk);
+    }
+  }
+  else if(comp.type === 'breaker'){
+    var bd = new THREE.Mesh(
+      new THREE.BoxGeometry(0.036, 0.09, 0.06),
+      new THREE.MeshPhongMaterial({ color: color, shininess: 100 })
+    );
+    bd.position.z = 0.04;
+    g.add(bd);
+
+    var lever = new THREE.Mesh(
+      new THREE.BoxGeometry(0.012, 0.03, 0.012),
+      new THREE.MeshPhongMaterial({ color: 0x101010 })
+    );
+    lever.position.set(0, 0.02, 0.075);
+    g.add(lever);
+  }
+  else if(comp.type === 'junction'){
+    var box = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.045, 0.045, 0.03, 18),
+      new THREE.MeshPhongMaterial({ color: 0xeaeaea, shininess: 60 })
+    );
+    box.rotation.x = Math.PI / 2;
+    box.position.z = 0.015;
+    g.add(box);
+  }
+  else if(comp.type === 'emergency'){
+    var bdy = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.14, 0.05),
+      new THREE.MeshPhongMaterial({ color: color, shininess: 80 })
+    );
+    bdy.position.z = 0.025;
+    g.add(bdy);
+
+    var led2 = new THREE.Mesh(
+      new THREE.SphereGeometry(0.014, 8, 8),
+      new THREE.MeshBasicMaterial({ color: powerOn ? 0x00ff88 : 0x004422 })
+    );
+    led2.position.set(0, 0.04, 0.052);
+    g.add(led2);
+  }
+  else if(comp.type === 'oven' || comp.type === 'water_heater' || comp.type === 'ac'){
+    var appliance = new THREE.Mesh(
+      new THREE.BoxGeometry(0.14, 0.16, 0.06),
+      new THREE.MeshPhongMaterial({ color: color, shininess: 120 })
+    );
+    appliance.position.z = 0.03;
+    g.add(appliance);
+
+    var indicator = new THREE.Mesh(
+      new THREE.SphereGeometry(0.012, 8, 8),
+      new THREE.MeshBasicMaterial({ color: powerOn ? 0x00ff88 : 0x223322 })
+    );
+    indicator.position.set(0, 0.05, 0.062);
+    g.add(indicator);
+  }
+  else {
+    body = new THREE.Mesh(
+      new THREE.BoxGeometry(0.086, 0.086, 0.014),
+      new THREE.MeshPhongMaterial({ color: color, shininess: 80 })
+    );
+    body.position.z = 0.007;
+    g.add(body);
+  }
+
+  g.userData = { type: 'wallComp', comp: comp, wall: wall, floor: floorLevel };
+  return g;
+}
+
+function makeCeilComp3D(comp, room, floorLevel){
+  var g = new THREE.Group();
+  var p = ceilComp3DPos(comp, room, floorLevel);
+  g.position.set(p.x, p.y, p.z);
+  var color = hexToInt(comp.color || '#fbbf24');
+
+  if(comp.type === 'lamp'){
+    var base = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.06, 0.06, 0.05, 14),
+      new THREE.MeshPhongMaterial({ color: 0xcccccc, shininess: 120 })
+    );
+    base.position.y = -0.025;
+    g.add(base);
+
+    var shadeMat2 = new THREE.MeshPhongMaterial({
+      color: 0xffffee,
+      emissive: 0xffdd88,
+      emissiveIntensity: powerOn ? 1 : 0.05
+    });
+    var bl = new THREE.Mesh(new THREE.SphereGeometry(0.095, 16, 12), shadeMat2);
+    bl.position.y = -0.13;
+    g.add(bl);
+
+    /* real light source */
+    if(powerOn){
+      var pl = new THREE.PointLight(0xffe0a0, 0.8, 8, 2);
+      pl.position.y = -0.15;
+      g.add(pl);
+      lightSources.push(pl);
+    } else {
+      var plOff = new THREE.PointLight(0x333322, 0.05, 4, 2);
+      plOff.position.y = -0.15;
+      g.add(plOff);
+    }
+  }
+  else if(comp.type === 'chand'){
+    var rod = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.012, 0.012, 0.3, 10),
+      new THREE.MeshPhongMaterial({ color: 0xd4af37, shininess: 200 })
+    );
+    rod.position.y = -0.15;
+    g.add(rod);
+
+    var ball = new THREE.Mesh(
+      new THREE.SphereGeometry(0.16, 18, 14),
+      new THREE.MeshPhongMaterial({
+        color: 0xffd700,
+        emissive: powerOn ? 0xcc8800 : 0x221100,
+        emissiveIntensity: powerOn ? 1 : 0.1,
+        shininess: 200
+      })
+    );
+    ball.position.y = -0.35;
+    g.add(ball);
+
+    for(var i = 0; i < 5; i++){
+      var a = i * Math.PI * 2 / 5;
+      var arm = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.008, 0.008, 0.18, 6),
+        new THREE.MeshPhongMaterial({ color: 0xd4af37 })
+      );
+      arm.rotation.z = Math.PI / 2;
+      arm.rotation.y = -a;
+      arm.position.set(Math.cos(a) * 0.09, -0.34, Math.sin(a) * 0.09);
+      g.add(arm);
+
+      var bulb2 = new THREE.Mesh(
+        new THREE.SphereGeometry(0.03, 10, 8),
+        new THREE.MeshBasicMaterial({ color: powerOn ? 0xffffaa : 0x444422 })
+      );
+      bulb2.position.set(Math.cos(a) * 0.18, -0.34, Math.sin(a) * 0.18);
+      g.add(bulb2);
+    }
+
+    if(powerOn){
+      var pl2 = new THREE.PointLight(0xffdd88, 1.2, 10, 2);
+      pl2.position.y = -0.4;
+      g.add(pl2);
+      lightSources.push(pl2);
+    }
+  }
+  else if(comp.type === 'spot'){
+    var ring = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.055, 0.055, 0.012, 18),
+      new THREE.MeshPhongMaterial({ color: 0xbbbbbb, shininess: 180 })
+    );
+    ring.position.y = -0.006;
+    g.add(ring);
+
+    var cone = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.035, 0.06, 18),
+      new THREE.MeshPhongMaterial({
+        color: 0xffe066,
+        emissive: powerOn ? 0xcc8800 : 0x221100,
+        emissiveIntensity: powerOn ? 1 : 0.1
+      })
+    );
+    cone.position.y = -0.045;
+    g.add(cone);
+
+    if(powerOn){
+      var pl3 = new THREE.PointLight(0xffddaa, 0.6, 6, 2);
+      pl3.position.y = -0.08;
+      g.add(pl3);
+      lightSources.push(pl3);
+    }
+  }
+  else if(comp.type === 'panel_led'){
+    var bar = new THREE.Mesh(
+      new THREE.BoxGeometry(0.9, 0.025, 0.06),
+      new THREE.MeshBasicMaterial({ color: powerOn ? 0xffffff : 0x444444 })
+    );
+    g.add(bar);
+    if(powerOn){
+      var pl4 = new THREE.PointLight(0xffffff, 0.5, 6, 2);
+      pl4.position.y = -0.05;
+      g.add(pl4);
+      lightSources.push(pl4);
+    }
+  }
+  else if(comp.type === 'fan'){
+    var mount = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.06, 0.05, 14),
+      new THREE.MeshPhongMaterial({ color: 0xcccccc, shininess: 120 })
+    );
+    mount.position.y = -0.025;
+    g.add(mount);
+
+    var rod2 = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.012, 0.012, 0.15, 8),
+      new THREE.MeshPhongMaterial({ color: 0xcccccc, shininess: 100 })
+    );
+    rod2.position.y = -0.11;
+    g.add(rod2);
+
+    var hub = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.07, 0.06, 16),
+      new THREE.MeshPhongMaterial({ color: 0xdddddd, shininess: 100 })
+    );
+    hub.position.y = -0.20;
+    g.add(hub);
+
+    var blades = new THREE.Group();
+    for(var b2 = 0; b2 < 4; b2++){
+      var a2 = b2 * Math.PI / 2;
+      var blade = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42, 0.01, 0.12),
+        new THREE.MeshPhongMaterial({ color: 0xe8dcc0 })
+      );
+      blade.position.set(Math.cos(a2) * 0.25, -0.20, Math.sin(a2) * 0.25);
+      blade.rotation.y = -a2;
+      blade.rotation.x = 0.15;
+      blade.castShadow = true;
+      blades.add(blade);
+    }
+    g.add(blades);
+    g.userData.bladesGroup = blades;
+  }
+  else if(comp.type === 'smoke' || comp.type === 'heat'){
+    var c2 = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.08, 0.08, 0.05, 16),
+      new THREE.MeshPhongMaterial({ color: 0xffffff, shininess: 80 })
+    );
+    c2.position.y = -0.025;
+    g.add(c2);
+
+    var led3 = new THREE.Mesh(
+      new THREE.SphereGeometry(0.015, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff2222 })
+    );
+    led3.position.y = -0.055;
+    g.add(led3);
+  }
+  else if(comp.type === 'ac_ceil'){
+    var box2 = new THREE.Mesh(
+      new THREE.BoxGeometry(0.9, 0.25, 0.3),
+      new THREE.MeshPhongMaterial({ color: 0xfafafa, shininess: 80 })
+    );
+    box2.position.y = -0.15;
+    g.add(box2);
+
+    var grill = new THREE.Mesh(
+      new THREE.BoxGeometry(0.8, 0.01, 0.2),
+      new THREE.MeshPhongMaterial({ color: 0xdddddd })
+    );
+    grill.position.y = -0.28;
+    g.add(grill);
+  }
+  else {
+    var d = new THREE.Mesh(
+      new THREE.BoxGeometry(0.15, 0.1, 0.15),
+      new THREE.MeshPhongMaterial({ color: color })
+    );
+    d.position.y = -0.05;
+    g.add(d);
+  }
+
+  g.userData.type = 'ceilComp';
+  g.userData.comp = comp;
+  g.userData.room = room;
+  g.userData.floor = floorLevel;
+  return g;
+}
+
+/* ==================== Part D — Wires with Current ==================== */
+var WIRE_COLORS_3D = {
+  phase:  0xd97706,
+  neutre: 0x3b82f6,
+  terre:  0x84cc16,
+  travel1: 0xf97316,
+  travel2: 0xa855f7
+};
+
+var WIRE_RADIUS = 0.006;
+var WIRE_GAP = 0.028;
+
+function clearWires3D(){
+  while(wireGroup3d.children.length){
+    var ch = wireGroup3d.children[0];
+    wireGroup3d.remove(ch);
+    if(ch.geometry) ch.geometry.dispose();
+    if(ch.material){
+      if(Array.isArray(ch.material)) ch.material.forEach(function(m){ m.dispose(); });
+      else ch.material.dispose();
+    }
+  }
+  wireMeshes3d = [];
+  currentDots = [];
+}
+
+function rebuildWires3D(){
+  if(!THREE || !PROJ) return;
+  clearWires3D();
+
+  /* collect all circuits */
+  var circuits = getAllCircuits();
+  if(!circuits.length) return;
+
+  /* MST for each circuit */
+  circuits.forEach(function(circuit){
+    var comps = [];
+    circuit.components.forEach(function(cid){
+      var item = findComponentById(cid);
+      if(item) comps.push(item);
+    });
+    if(comps.length === 0) return;
+
+    /* find the panel */
+    var panel = null;
+    if(circuit.panelId){
+      for(var pi = 0; pi < PROJ.panels.length; pi++){
+        if(PROJ.panels[pi].id === circuit.panelId){ panel = PROJ.panels[pi]; break; }
+      }
+    }
+    if(!panel) panel = PROJ.panels[0];
+    if(!panel) return;
+
+    var panelNode = {
+      kind: 'panel',
+      comp: { type: 'panel', id: 'panel_root_' + circuit.id },
+      pos: {
+        x: panel.x * PROJ.building.length,
+        y: panel.floor * PROJ.building.height + 1.2,
+        z: panel.y * PROJ.building.width
+      },
+      floorLevel: panel.floor
+    };
+
+    var allNodes = [panelNode].concat(comps);
+    var edges = mstPrim(allNodes);
+
+    /* get wire types for circuit */
+    var cdef = CIRCUIT_TYPES[circuit.type] || CIRCUIT_TYPES.lighting;
+    var wires = (circuit.type === 'lighting' || circuit.type === 'emergency')
+      ? ['phase', 'neutre']
+      : ['phase', 'neutre', 'terre'];
+
+    edges.forEach(function(edge){
+      var path = route3D(edge.from, edge.to, panelNode);
+      var pathLen = polyLen3D(path);
+
+      /* perpendicular offset direction for parallel wires */
+      var dx = path[path.length - 1].x - path[0].x;
+      var dz = path[path.length - 1].z - path[0].z;
+      var dL = Math.hypot(dx, dz) || 1;
+      var px = -dz / dL, pz = dx / dL;
+
+      wires.forEach(function(wt, i){
+        var off = (i - (wires.length - 1) / 2) * WIRE_GAP;
+        var offsetPath = path.map(function(pt){
+          return { x: pt.x + px * off, y: pt.y, z: pt.z + pz * off };
+        });
+        var mesh = makeTube3D(offsetPath, WIRE_COLORS_3D[wt], WIRE_RADIUS);
+        if(mesh){
+          mesh.userData.path = offsetPath;
+          mesh.userData.circuitId = circuit.id;
+          mesh.userData.wireType = wt;
+          wireGroup3d.add(mesh);
+          wireMeshes3d.push(mesh);
+        }
+      });
+    });
+  });
+
+  /* if power is on, spawn dots */
+  if(powerOn) spawnCurrentDots3D();
+}
+
+function mstPrim(nodes){
+  if(nodes.length < 2) return [];
+  var n = nodes.length;
+  var inTree = new Array(n).fill(false);
+  var edges = [];
+  inTree[0] = true;
+  for(var step = 0; step < n - 1; step++){
+    var bestA = -1, bestB = -1, bestD = Infinity;
+    for(var i = 0; i < n; i++){
+      if(!inTree[i]) continue;
+      for(var j = 0; j < n; j++){
+        if(inTree[j]) continue;
+        var d = dist3(nodes[i].pos, nodes[j].pos);
+        if(d < bestD){ bestD = d; bestA = i; bestB = j; }
+      }
+    }
+    if(bestA < 0) break;
+    inTree[bestB] = true;
+    edges.push({ from: nodes[bestA], to: nodes[bestB], d: bestD });
+  }
+  return edges;
+}
+
+function polyLen3D(path){
+  var L = 0;
+  for(var i = 1; i < path.length; i++) L += dist3(path[i - 1], path[i]);
+  return L;
+}
+
+/* route a wire from A to B in a realistic way (vertical, then horizontal, then vertical) */
+function route3D(from, to, panelNode){
+  var b = PROJ.building;
+  var fy = from.floorLevel * b.height + 0.08;
+  var path = [];
+
+  var startY = from.pos.y;
+  var endY = to.pos.y;
+  var sx = from.pos.x, sz = from.pos.z;
+  var ex = to.pos.x, ez = to.pos.z;
+
+  /* exit sideways from wall comp */
+  if(from.kind === 'wallComp' && from.wall){
+    var n1 = wallNormal(from.wall);
+    var sd1 = from.comp.side || 1;
+    var off1 = from.wall.thickness / 2 + 0.06;
+    var sx2 = sx + n1.x * off1 * sd1;
+    var sz2 = sz + n1.z * off1 * sd1;
+    /* For panel root, skip */
+    if(from.comp.type !== 'panel'){
+      path.push({ x: sx, y: startY, z: sz });
+      path.push({ x: sx2, y: startY, z: sz2 });
+      sx = sx2; sz = sz2;
+    }
+  }
+
+  path.push({ x: sx, y: startY, z: sz });
+
+  /* for ceiling comps: drop from ceiling to horizontal plane at top */
+  if(from.kind === 'ceilComp'){
+    var cy = from.floorLevel * b.height + b.height - 0.08;
+    path.push({ x: sx, y: cy, z: sz });
+    /* find nearest wall to route to */
+    var wp = findNearestWallPoint3D(sx, sz, from.floorLevel);
+    if(wp){
+      path.push({ x: wp.x, y: cy, z: wp.z });
+      path.push({ x: wp.x, y: fy, z: wp.z });
+    } else {
+      path.push({ x: sx, y: fy, z: sz });
+    }
+  } else if(from.kind === 'panel'){
+    path.push({ x: sx, y: fy, z: sz });
+  } else {
+    path.push({ x: sx, y: fy, z: sz });
+  }
+
+  /* horizontal run at floor level */
+  path.push({ x: ex, y: fy, z: ez });
+
+  /* for ceiling comps destination */
+  if(to.kind === 'ceilComp'){
+    var cy2 = to.floorLevel * b.height + b.height - 0.08;
+    var wp2 = findNearestWallPoint3D(ex, ez, to.floorLevel);
+    if(wp2){
+      path.push({ x: wp2.x, y: fy, z: wp2.z });
+      path.push({ x: wp2.x, y: cy2, z: wp2.z });
+    } else {
+      path.push({ x: ex, y: cy2, z: ez });
+    }
+    path.push({ x: ex, y: endY, z: ez });
+  } else if(to.kind === 'panel'){
+    path.push({ x: ex, y: endY, z: ez });
+  } else {
+    /* wall comp destination */
+    path.push({ x: ex, y: endY, z: ez });
+  }
+
+  return path;
+}
+
+function findNearestWallPoint3D(x, z, floorLevel){
+  var fd = PROJ.floors[floorLevel];
+  if(!fd) return null;
+  var best = null, bd = Infinity;
+  fd.walls.forEach(function(w){
+    var dx = w.x2 - w.x1, dz = w.y2 - w.y1;
+    var L2 = dx * dx + dz * dz;
+    if(L2 < 0.001) return;
+    var t = clamp(((x - w.x1) * dx + (z - w.y1) * dz) / L2, 0, 1);
+    var px = w.x1 + t * dx, pz = w.y1 + t * dz;
+    var d = Math.hypot(x - px, z - pz);
+    if(d < bd){ bd = d; best = { x: px, z: pz }; }
+  });
+  return best;
+}
+
+function makeTube3D(points, colorHex, radius){
+  if(points.length < 2) return null;
+  var vs = points.map(function(p){ return new THREE.Vector3(p.x, p.y, p.z); });
+  var curve = new THREE.CatmullRomCurve3(vs, false, 'catmullrom', 0.15);
+  var geo = new THREE.TubeGeometry(curve, Math.max(30, vs.length * 16), radius, 8, false);
+  var mat = new THREE.MeshPhongMaterial({ color: colorHex, shininess: 60 });
+  return new THREE.Mesh(geo, mat);
+}
+
+/* ==================== Current Dots ==================== */
+function spawnCurrentDots3D(){
+  clearCurrentDots3D();
+  if(!powerOn || !wireMeshes3d.length) return;
+
+  wireMeshes3d.forEach(function(wm){
+    if(!wm.userData.path) return;
+    var path = wm.userData.path;
+    var totalLen = polyLen3D(path);
+    var count = Math.max(3, Math.floor(totalLen * 1.5));
+
+    for(var i = 0; i < count; i++){
+      var dot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.014, 6, 6),
+        new THREE.MeshBasicMaterial({ color: 0xff8c00, transparent: true, opacity: 0.95 })
+      );
+      dot.userData = {
+        path: path,
+        t: i / count,
+        speed: 0.3
+      };
+      wireGroup3d.add(dot);
+      currentDots.push(dot);
+    }
+  });
+}
+
+function clearCurrentDots3D(){
+  for(var i = 0; i < currentDots.length; i++){
+    var d = currentDots[i];
+    wireGroup3d.remove(d);
+    if(d.geometry) d.geometry.dispose();
+    if(d.material) d.material.dispose();
+  }
+  currentDots = [];
+}
+
+function updateCurrentDots3D(dt){
+  if(!powerOn) return;
+  for(var i = 0; i < currentDots.length; i++){
+    var d = currentDots[i];
+    var ud = d.userData;
+    ud.t += ud.speed * dt * currentSpeed;
+    if(ud.t > 1) ud.t -= 1;
+    var p = posOnPath3D(ud.path, ud.t);
+    if(p) d.position.set(p.x, p.y, p.z);
+    var fade = Math.min(ud.t, 1 - ud.t) * 4;
+    d.material.opacity = clamp(fade, 0, 0.95);
+  }
+}
+
+function posOnPath3D(path, t){
+  if(path.length < 2) return path[0];
+  var segs = [], total = 0;
+  for(var i = 1; i < path.length; i++){
+    var d = dist3(path[i - 1], path[i]);
+    segs.push(d);
+    total += d;
+  }
+  if(total < 0.001) return path[0];
+  var target = t * total;
+  var acc = 0;
+  for(var j = 0; j < segs.length; j++){
+    if(acc + segs[j] >= target){
+      var local = (target - acc) / (segs[j] || 1);
+      var a = path[j], b = path[j + 1];
+      return {
+        x: a.x + (b.x - a.x) * local,
+        y: a.y + (b.y - a.y) * local,
+        z: a.z + (b.z - a.z) * local
+      };
+    }
+    acc += segs[j];
+  }
+  return path[path.length - 1];
+}
+
+/* ==================== Power Toggle ==================== */
+function toggleMainPower(){
+  powerOn = !powerOn;
+  var btn = document.getElementById('powerBtn');
+  if(btn) btn.classList.toggle('on', powerOn);
+  if(PROJ) PROJ._powerOn = powerOn;
+
+  /* update all light emissives */
+  applyPowerState();
+
+  if(powerOn){
+    spawnCurrentDots3D();
+    toast('⚡ التيار يعمل');
+  } else {
+    clearCurrentDots3D();
+    toast('⏻ التيار مقطوع');
+  }
+}
+
+function applyPowerState(){
+  if(!THREE) return;
+  comps3d.forEach(function(obj){
+    obj.traverse(function(child){
+      if(child.isMesh && child.material){
+        var m = child.material;
+        if(m.emissive && m.emissiveIntensity !== undefined){
+          if(child.userData.isLightBulb){
+            m.emissiveIntensity = powerOn ? 1 : 0.05;
+          }
+        }
+      }
+    });
+  });
+
+  /* toggle point lights */
+  lightSources.forEach(function(light){
+    if(light.type === 'PointLight'){
+      light.intensity = powerOn ? (light.userData.origIntensity || 0.8) : 0.02;
+    }
+  });
+}
+
+/* ==================== Part E — Animation + Interaction ==================== */
+function animate3D(){
+  requestAnimationFrame(animate3D);
+  if(!renderer3d || !camera3d || !scene3d) return;
+
+  var now = performance.now();
+  var dt = (now - _lastT) / 1000;
+  if(dt > 0.1) dt = 0.1;
+  _lastT = now;
+
+  if(camMode3d === 'walk'){
+    /* movement */
+    var sp = 2.6;
+    var mx = moveVec3d.x, my = moveVec3d.y;
+    if(Math.abs(mx) + Math.abs(my) > 0.1){
+      var fw = Math.cos(walk3d.yaw), fz = Math.sin(walk3d.yaw);
+      var rx = Math.cos(walk3d.yaw - Math.PI / 2), rz = Math.sin(walk3d.yaw - Math.PI / 2);
+      walk3d.pos.x += (-my * fw - mx * rx) * sp * dt;
+      walk3d.pos.z += (-my * fz - mx * rz) * sp * dt;
+    }
+    /* look */
+    if(Math.abs(lookVec3d.x) > 0.1) walk3d.yaw -= lookVec3d.x * 2.2 * dt;
+    if(Math.abs(lookVec3d.y) > 0.1) walk3d.pitch = clamp(walk3d.pitch - lookVec3d.y * 1.8 * dt, -1.4, 1.4);
+
+    /* wall transparency */
+    walls3d.forEach(function(w){
+      if(w.userData.floor !== floorView3d){ w.visible = false; return; }
+      w.visible = true;
+      var d = w.position.distanceTo(camera3d.position);
+      if(d < 3.2){
+        w.material.transparent = true;
+        w.material.opacity = Math.max(0.06, (d - 0.5) / 2.7);
+        w.material.depthWrite = false;
+      } else {
+        w.material.transparent = false;
+        w.material.opacity = 1;
+        w.material.depthWrite = true;
+      }
+    });
+    ceils3d.forEach(function(c){
+      c.visible = c.userData.floor <= floorView3d;
+      if(c.visible && c.userData.floor === floorView3d){
+        c.material.opacity = 0.05;
+      }
+    });
+    updateCam3d();
+  } else {
+    /* orbit mode — visibility by floor */
+    walls3d.forEach(function(w){
+      w.visible = w.userData.floor === floorView3d;
+    });
+    ceils3d.forEach(function(c){
+      c.visible = c.userData.floor <= floorView3d;
+      if(c.userData.floor === floorView3d) c.material.opacity = 0.15;
+    });
+  }
+
+  /* spinning fan blades */
+  comps3d.forEach(function(obj){
+    if(obj.userData && obj.userData.bladesGroup && powerOn){
+      obj.userData.bladesGroup.rotation.y += dt * 6;
+    }
+  });
+
+  /* current dots */
+  updateCurrentDots3D(dt);
+
+  renderer3d.render(scene3d, camera3d);
+}
+
+/* ==================== Tap Handler ==================== */
+function handleTap3D(e){
+  if(!THREE || !camera3d || !renderer3d) return;
+  var cv = renderer3d.domElement;
+  var r = cv.getBoundingClientRect();
+  var mx = ((e.clientX - r.left) / r.width) * 2 - 1;
+  var my = -((e.clientY - r.top) / r.height) * 2 + 1;
+
+  var ray = new THREE.Raycaster();
+  ray.setFromCamera({ x: mx, y: my }, camera3d);
+
+  var targets = [];
+  comps3d.forEach(function(c){ targets.push(c); });
+  walls3d.forEach(function(w){ if(w.visible) targets.push(w); });
+  ceils3d.forEach(function(c){ if(c.visible) targets.push(c); });
+
+  if(!targets.length) return;
+
+  var hits = ray.intersectObjects(targets, true);
+  if(!hits.length){
+    /* check floor tap to move camera */
+    var floorTargets = [];
+    bGroup3d.traverse(function(o){
+      if(o.isMesh && o.geometry && o.geometry.type === 'PlaneGeometry'){
+        floorTargets.push(o);
+      }
+    });
+    return;
+  }
+
+  var obj = hits[0].object;
+  var depth = 0;
+  while(obj && !obj.userData.type && depth < 12){
+    obj = obj.parent;
+    depth++;
+  }
+  if(!obj || !obj.userData.type) return;
+
+  var ud = obj.userData;
+
+  if(ud.type === 'wallComp'){
+    var comp = ud.comp;
+    if(!powerOn || true){
+      /* menu: edit / delete / toggle */
+      var html = '<p style="color:#8899aa;font-size:12px;margin-bottom:10px">' + comp.name + '</p>';
+      html += '<label>الحالة</label>';
+      html += '<select id="cpState"><option value="1"' + (comp.on !== false ? ' selected' : '') + '>مفعّل</option><option value="0"' + (comp.on === false ? ' selected' : '') + '>معطّل</option></select>';
+      html += '<label>الارتفاع (م)</label><input id="cpH" type="number" step="0.05" value="' + comp.h.toFixed(2) + '">';
+      openModal('المكوّن', html, function(){
+        comp.h = +document.getElementById('cpH').value;
+        comp.on = document.getElementById('cpState').value === '1';
+        closeModal();
+        build3D();
+        if(PROJ.panels.length) rebuildWires3D();
+      });
+      var actions = document.querySelector('.modal-actions');
+      var del = document.createElement('button');
+      del.textContent = '🗑'; del.className = 'btn-del';
+      del.onclick = function(){
+        var face = ud.wall.faces[String(comp.side)];
+        if(face) face.components = face.components.filter(function(x){ return x !== comp; });
+        closeModal();
+        build3D();
+        if(PROJ.panels.length) rebuildWires3D();
+      };
+      actions.insertBefore(del, actions.firstChild);
+    }
+    return;
+  }
+
+  if(ud.type === 'ceilComp'){
+    var comp2 = ud.comp;
+    var html2 = '<p style="color:#8899aa;font-size:12px;margin-bottom:10px">' + comp2.name + '</p>';
+    html2 += '<label>الحالة</label>';
+    html2 += '<select id="ccState"><option value="1"' + (comp2.on !== false ? ' selected' : '') + '>مفعّل</option><option value="0"' + (comp2.on === false ? ' selected' : '') + '>معطّل</option></select>';
+    openModal('السقف', html2, function(){
+      comp2.on = document.getElementById('ccState').value === '1';
+      closeModal();
+      build3D();
+    });
+    var actions2 = document.querySelector('.modal-actions');
+    var del2 = document.createElement('button');
+    del2.textContent = '🗑'; del2.className = 'btn-del';
+    del2.onclick = function(){
+      ud.room.ceilingComponents = (ud.room.ceilingComponents || []).filter(function(x){ return x !== comp2; });
+      closeModal();
+      build3D();
+      if(PROJ.panels.length) rebuildWires3D();
+    };
+    actions2.insertBefore(del2, actions2.firstChild);
+    return;
+  }
+
+  if(ud.type === 'wall'){
+    var w = ud.wall;
+    var n = wallNormal(w);
+    var cxw = (w.x1 + w.x2) / 2;
+    var czw = (w.y1 + w.y2) / 2;
+    var proj = (camera3d.position.x - cxw) * n.x + (camera3d.position.z - czw) * n.y;
+    var side = proj >= 0 ? 1 : -1;
+    if(typeof openWallEditor === 'function'){
+      openWallEditor(w, side);
+    }
+    return;
+  }
+
+  if(ud.type === 'ceiling'){
+    if(typeof openCeilEditor === 'function'){
+      openCeilEditor(ud.room, ud.floor);
+    }
+    return;
+  }
+}
+
+/* ==================== Public API for app.js ==================== */
+function runWires(){
+  if(!THREE || !PROJ){ toast('افتح 3D أولاً', 'warn'); return; }
+  if(!PROJ.panels.length || !PROJ.panels[0].circuits.length){
+    toast('شغّل التصميم الآلي أولاً', 'warn');
+    return;
+  }
+  rebuildWires3D();
+  toast('⚡ تم رسم الأسلاك (' + wireMeshes3d.length + ')');
+}
+
+function showPanel(){
+  go('panel');
+  renderPanelView();
+}

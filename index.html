@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0a0e1a">
+<title>كهرباء سيميوليتور</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="page active" id="page-home">
+  <div class="hero">
+    <div class="hero-icon">⚡</div>
+    <h1>كهرباء سيميوليتور</h1>
+    <p>محاكي هندسي لتصميم الكهرباء</p>
+  </div>
+  <div class="home-pad">
+    <button class="bigbtn primary" onclick="newProject()">➕ مشروع جديد</button>
+    <label class="bigbtn ghost">📥 استيراد
+      <input type="file" accept=".json" onchange="importProj(this.files[0])" style="display:none">
+    </label>
+  </div>
+  <div class="proj-list" id="projList"></div>
+</div>
+
+<div class="page" id="page-setup">
+  <div class="topbar">
+    <button class="iconbtn" onclick="go('home')">←</button>
+    <div class="title">إعداد المشروع</div>
+    <button class="iconbtn" onclick="deleteProject()">🗑</button>
+  </div>
+  <div class="scroll-form">
+    <label>اسم المشروع</label>
+    <input id="fName" value="مشروعي">
+    <div class="grid2">
+      <div><label>الطول (م)</label><input id="fLen" type="number" value="14" step="0.1"></div>
+      <div><label>العرض (م)</label><input id="fWid" type="number" value="12" step="0.1"></div>
+    </div>
+    <div class="grid2">
+      <div><label>ارتفاع الطابق (م)</label><input id="fHei" type="number" value="3" step="0.1"></div>
+      <div><label>عدد الطوابق</label><input id="fFloors" type="number" value="1" min="1" max="6"></div>
+    </div>
+    <div class="grid2">
+      <div><label>غرف طولاً</label><input id="fRX" type="number" value="2" min="1" max="5"></div>
+      <div><label>غرف عرضاً</label><input id="fRY" type="number" value="2" min="1" max="5"></div>
+    </div>
+    <label>سماكة الجدار (م)</label>
+    <input id="fThick" type="number" value="0.2" step="0.05">
+    <label>نظام الكهرباء</label>
+    <select id="fSystem">
+      <option value="single">أحادي الطور (230V)</option>
+      <option value="three">ثلاثي الأطوار (400V)</option>
+    </select>
+    <div class="grid3">
+      <div><label>الجدران</label><input id="fWallC" type="color" value="#f0efe8"></div>
+      <div><label>الأرضية</label><input id="fFloorC" type="color" value="#8b7355"></div>
+      <div><label>السقف</label><input id="fCeilC" type="color" value="#ffffff"></div>
+    </div>
+    <button class="bigbtn primary" onclick="applySetup()">⚡ توليد</button>
+  </div>
+</div>
+
+<div class="page" id="page-plan">
+  <div class="topbar">
+    <button class="iconbtn" onclick="go('home')">🏠</button>
+    <div class="title">📐 المخطط<small id="planSub">اسحب • اصبعان للزوم</small></div>
+    <button class="iconbtn" onclick="doSave()">💾</button>
+    <button class="iconbtn accent" onclick="go('three')">🎥</button>
+  </div>
+  <div class="canvas-wrap">
+    <canvas id="planCanvas"></canvas>
+    <div class="hint" id="planHint"></div>
+    <div class="dock" id="planDock"></div>
+  </div>
+</div>
+
+<div class="page" id="page-wall">
+  <div class="topbar">
+    <button class="iconbtn" onclick="go('plan')">←</button>
+    <div class="title">🧱 حائط<small id="wallTitle">—</small></div>
+    <button class="iconbtn" onclick="doSave()">💾</button>
+  </div>
+  <div class="face-tabs">
+    <button class="face-tab active" id="faceA" onclick="setFace(1)">🅰 A</button>
+    <button class="face-tab" id="faceB" onclick="setFace(-1)">🅱 B</button>
+  </div>
+  <div class="canvas-wrap">
+    <canvas id="wallCanvas"></canvas>
+    <div class="hint" id="wallHint"></div>
+    <div class="dock" id="wallDock"></div>
+  </div>
+</div>
+
+<div class="page" id="page-ceil">
+  <div class="topbar">
+    <button class="iconbtn" onclick="go('plan')">←</button>
+    <div class="title">🔲 سقف<small id="ceilTitle">—</small></div>
+    <button class="iconbtn" onclick="doSave()">💾</button>
+  </div>
+  <div class="canvas-wrap">
+    <canvas id="ceilCanvas"></canvas>
+    <div class="hint" id="ceilHint"></div>
+    <div class="dock" id="ceilDock"></div>
+  </div>
+</div>
+
+<div class="page" id="page-three">
+  <div class="topbar">
+    <button class="iconbtn" onclick="go('plan')">📐</button>
+    <div class="title">🎥 محاكاة 3D<small id="threeSub">اسحب للدوران • اصبعان للزوم</small></div>
+    <button class="iconbtn" id="powerBtn" onclick="togglePower()">⚡</button>
+    <button class="iconbtn" onclick="showPanel()">📊</button>
+    <button class="iconbtn" onclick="go('report')">📋</button>
+    <button class="iconbtn" onclick="floorUp()">⬆</button>
+    <button class="iconbtn" onclick="floorDown()">⬇</button>
+    <button class="iconbtn accent" id="camBtn" onclick="toggleCam()">🎥</button>
+  </div>
+  <div class="canvas-wrap">
+    <canvas id="scene3d"></canvas>
+    <div class="joy" id="joyL"><div class="joyK"></div></div>
+    <div class="joy" id="joyR"><div class="joyK2"></div></div>
+    <button id="exitWalk" onclick="toggleCam()">✕</button>
+  </div>
+</div>
+
+<div class="page" id="page-panel">
+  <div class="topbar">
+    <button class="iconbtn" onclick="go('three')">←</button>
+    <div class="title">📊 لوحة التوزيع</div>
+    <button class="iconbtn" onclick="autoDesign()">🧠</button>
+  </div>
+  <div class="panel-view" id="panelView"></div>
+</div>
+
+<div class="page" id="page-report">
+  <div class="topbar">
+    <button class="iconbtn" onclick="go('three')">←</button>
+    <div class="title">📋 التقرير الهندسي</div>
+    <button class="iconbtn" onclick="exportReport()">💾</button>
+  </div>
+  <div class="report-view" id="reportView"></div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="modal-box">
+    <h3 id="modalTitle"></h3>
+    <div id="modalBody"></div>
+    <div class="modal-actions">
+      <button onclick="closeModal()">إلغاء</button>
+      <button class="btn-ok" id="modalOk">تأكيد</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="js/core.js"></script>
+<script src="js/catalog.js"></script>
+<script src="js/model.js"></script>
+<script src="js/plan.js"></script>
+<script src="js/three.js"></script>
+<script src="js/app.js"></script>
+<script>
+if("serviceWorker" in navigator){
+  window.addEventListener("load",function(){
+    navigator.serviceWorker.register("sw.js").catch(function(e){console.warn("SW",e);});
+  });
+}
+</script>
+</body>
+</html>
