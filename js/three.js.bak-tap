@@ -115,17 +115,12 @@ function updateCam3d(){
 }
 
 function toggleCam3d(){
-  if(!PROJ) return;
   if(camMode3d === 'orbit'){
     camMode3d = 'walk';
-    var btn = document.getElementById('camBtn');
-    if(btn) btn.textContent = '\uD83D\uDEB6';
-    var jl = document.getElementById('joyL');
-    var jr = document.getElementById('joyR');
-    if(jl){ jl.classList.add('show'); jl.style.display = 'flex'; }
-    if(jr){ jr.classList.add('show'); jr.style.display = 'flex'; }
-    var ex = document.getElementById('exitWalk');
-    if(ex) ex.classList.add('show');
+    document.getElementById('camBtn').textContent = '🚶';
+    document.getElementById('joyL').style.display = 'flex';
+    document.getElementById('joyR').style.display = 'flex';
+    document.getElementById('exitWalk').classList.add('show');
     walk3d.pos.set(
       PROJ.building.length / 2,
       floorView3d * PROJ.building.height + 1.65,
@@ -133,18 +128,12 @@ function toggleCam3d(){
     );
     walk3d.yaw = 0;
     walk3d.pitch = 0;
-    if(typeof toast === 'function') toast('\uD83D\uDEB6 وضع المشي');
   } else {
     camMode3d = 'orbit';
-    var btn2 = document.getElementById('camBtn');
-    if(btn2) btn2.textContent = '\uD83C\uDFA5';
-    var jl2 = document.getElementById('joyL');
-    var jr2 = document.getElementById('joyR');
-    if(jl2){ jl2.classList.remove('show'); jl2.style.display = 'none'; }
-    if(jr2){ jr2.classList.remove('show'); jr2.style.display = 'none'; }
-    var ex2 = document.getElementById('exitWalk');
-    if(ex2) ex2.classList.remove('show');
-    if(typeof toast === 'function') toast('\uD83C\uDFA5 وضع الدوران');
+    document.getElementById('camBtn').textContent = '🎥';
+    document.getElementById('joyL').style.display = 'none';
+    document.getElementById('joyR').style.display = 'none';
+    document.getElementById('exitWalk').classList.remove('show');
   }
   updateCam3d();
 }
@@ -167,31 +156,6 @@ function setupOrbit3D(cv){
   var pointers = {};
   var startX = 0, startY = 0, lastX = 0, lastY = 0;
   var startT = 0, moved = false, lastPinch = 0;
-  var lastTapTime = 0;
-
-  function fireTap(e){
-    var now = Date.now();
-    if(now - lastTapTime < 250) return;
-    lastTapTime = now;
-    try {
-      handleTap3D(e);
-    } catch(err){
-      console.error('[tap err]', err);
-      if(typeof toast === 'function') toast('خطأ في اللمس', 'warn');
-    }
-  }
-
-  function endPointer(e){
-    var existed = !!pointers[e.pointerId];
-    delete pointers[e.pointerId];
-    if(Object.keys(pointers).length > 0) return;
-    var elapsed = Date.now() - startT;
-    if(existed && !moved && elapsed < 600){
-      fireTap(e);
-    }
-    moved = false;
-    lastPinch = 0;
-  }
 
   cv.addEventListener('pointerdown', function(e){
     pointers[e.pointerId] = true;
@@ -203,7 +167,6 @@ function setupOrbit3D(cv){
       moved = false;
     } else if(n === 2){
       lastPinch = 0;
-      moved = true;
     }
   });
 
@@ -212,8 +175,7 @@ function setupOrbit3D(cv){
     var n = Object.keys(pointers).length;
     if(n === 2) return;
     if(n === 1){
-      var totalMove = Math.hypot(e.clientX - startX, e.clientY - startY);
-      if(totalMove > 8) moved = true;
+      if(!moved && Math.hypot(e.clientX - startX, e.clientY - startY) > 8) moved = true;
       if(camMode3d === 'orbit' && moved){
         var dx = e.clientX - lastX, dy = e.clientY - lastY;
         orbit3d.theta -= dx * 0.008;
@@ -221,29 +183,25 @@ function setupOrbit3D(cv){
         orbit3d.phi = clamp(orbit3d.phi, 0.15, Math.PI - 0.15);
         updateCam3d();
       }
-      lastX = e.clientX;
-      lastY = e.clientY;
+      lastX = e.clientX; lastY = e.clientY;
     }
   });
 
-  cv.addEventListener('pointerup', endPointer);
-  cv.addEventListener('pointercancel', endPointer);
-
-  /* Fallback: click (يعمل على أندرويد Chrome أيضاً) */
-  cv.addEventListener('click', function(e){
-    if(Date.now() - startT < 200) return;
-    fireTap(e);
-  });
-
-  /* Fallback: touchend قديم */
-  cv.addEventListener('touchend', function(e){
-    if(e.changedTouches.length === 1 && !moved && Date.now() - startT < 600){
-      var t = e.changedTouches[0];
-      if(Date.now() - lastTapTime > 250){
-        fireTap({ clientX: t.clientX, clientY: t.clientY });
+  cv.addEventListener('pointerup', function(e){
+    var existed = !!pointers[e.pointerId];
+    delete pointers[e.pointerId];
+    if(Object.keys(pointers).length === 0){
+      if(existed && !moved && Date.now() - startT < 350){
+        handleTap3D(e);
       }
+      moved = false;
+      lastPinch = 0;
     }
-    lastPinch = 0;
+  });
+
+  cv.addEventListener('pointercancel', function(e){
+    delete pointers[e.pointerId];
+    if(Object.keys(pointers).length === 0){ moved = false; lastPinch = 0; }
   });
 
   cv.addEventListener('touchmove', function(e){
@@ -259,6 +217,7 @@ function setupOrbit3D(cv){
       lastPinch = d;
     }
   }, { passive: true });
+  cv.addEventListener('touchend', function(){ lastPinch = 0; });
 }
 
 function setupJoysticks3D(){
@@ -313,31 +272,6 @@ function setupKeyboard3D(){
 }
 
 /* ==================== Part B — Build Building ==================== */
-
-function buildFurniture3D(fd){
-  var T = THREE;
-  var floorY = fd.level * PROJ.building.height;
-  fd.rooms.forEach(function(room){
-    room.furniture.forEach(function(fn){
-      var geo = new T.BoxGeometry(fn.w, 0.5, fn.h);
-      var mat = new T.MeshPhongMaterial({
-        color: hexToInt(fn.color || '#a08060'),
-        shininess: 20
-      });
-      var mesh = new T.Mesh(geo, mat);
-      var roomCenterX = room.x + room.w / 2;
-      var roomCenterZ = room.y + room.h / 2;
-      var fx = fn.x + fn.w / 2 - roomCenterX;
-      var fz = fn.y + fn.h / 2 - roomCenterZ;
-      mesh.position.set(fx, floorY + 0.25, fz);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.userData = { type: 'furniture', furniture: fn, room: room, floor: fd.level };
-      bGroup3d.add(mesh);
-    });
-  });
-}
-
 function build3D(){
   if(!bGroup3d || !THREE || !PROJ) return;
   while(bGroup3d.children.length){
@@ -426,9 +360,6 @@ function build3D(){
     fd.stairs.forEach(function(s){
       addStair3D(s, fd.level);
     });
-
-    /* furniture */
-    buildFurniture3D(fd);
   }
 
   /* components 3D */
@@ -1385,38 +1316,16 @@ function toggleMainPower(){
   if(btn) btn.classList.toggle('on', powerOn);
   if(PROJ) PROJ._powerOn = powerOn;
 
+  /* update all light emissives */
+  applyPowerState();
+
   if(powerOn){
-    if(wireMeshes3d.length > 0){
-      spawnCurrentDots3D();
-    } else {
-      if(PROJ.panels.length && PROJ.panels[0].circuits.length){
-        rebuildWires3D();
-      }
-    }
-    if(typeof toast === 'function') toast('\u26A1 التيار يعمل');
+    spawnCurrentDots3D();
+    toast('⚡ التيار يعمل');
   } else {
     clearCurrentDots3D();
-    if(typeof toast === 'function') toast('\u23FB التيار مقطوع');
+    toast('⏻ التيار مقطوع');
   }
-
-  /* تحديث الإضاءة */
-  comps3d.forEach(function(obj){
-    obj.traverse(function(child){
-      if(child.isMesh && child.material && child.material.emissive){
-        if(child.userData.isBulb){
-          child.material.emissiveIntensity = powerOn ? 1 : 0.05;
-        }
-      }
-    });
-  });
-  lightSources.forEach(function(light){
-    if(light.type === 'PointLight'){
-      if(light.userData.origIntensity === undefined){
-        light.userData.origIntensity = light.intensity;
-      }
-      light.intensity = powerOn ? light.userData.origIntensity : 0.02;
-    }
-  });
 }
 
 function applyPowerState(){
@@ -1514,47 +1423,31 @@ function animate3D(){
 
 /* ==================== Tap Handler ==================== */
 function handleTap3D(e){
-  if(!THREE){ console.warn('[tap] THREE not loaded'); return; }
-  if(!camera3d){ console.warn('[tap] camera3d missing'); return; }
-  if(!renderer3d){ console.warn('[tap] renderer3d missing'); return; }
-
+  if(!THREE || !camera3d || !renderer3d) return;
   var cv = renderer3d.domElement;
   var r = cv.getBoundingClientRect();
   var mx = ((e.clientX - r.left) / r.width) * 2 - 1;
   var my = -((e.clientY - r.top) / r.height) * 2 + 1;
 
   var ray = new THREE.Raycaster();
-  var coords = new THREE.Vector2(mx, my);
-  ray.setFromCamera(coords, camera3d);
+  ray.setFromCamera({ x: mx, y: my }, camera3d);
 
-  /* جمع الأهداف */
   var targets = [];
-  for(var i = 0; i < comps3d.length; i++) targets.push(comps3d[i]);
-  for(var j = 0; j < walls3d.length; j++){
-    if(walls3d[j].visible !== false) targets.push(walls3d[j]);
-  }
-  for(var k = 0; k < ceils3d.length; k++){
-    if(ceils3d[k].visible !== false) targets.push(ceils3d[k]);
-  }
+  comps3d.forEach(function(c){ targets.push(c); });
+  walls3d.forEach(function(w){ if(w.visible) targets.push(w); });
+  ceils3d.forEach(function(c){ if(c.visible) targets.push(c); });
 
-  console.log('[tap] targets:', targets.length, 'comps:', comps3d.length, 'walls:', walls3d.length);
-
-  if(!targets.length){
-    toast('لا يوجد شيء للنقر عليه', 'warn');
-    return;
-  }
+  if(!targets.length) return;
 
   var hits = ray.intersectObjects(targets, true);
-  console.log('[tap] hits:', hits.length);
-
   if(!hits.length){
-    /* يحاول مرة أخرى بدون recursive */
-    hits = ray.intersectObjects(targets, false);
-    console.log('[tap] hits (flat):', hits.length);
-  }
-
-  if(!hits.length){
-    toast('لم تلمس أي شيء');
+    /* check floor tap to move camera */
+    var floorTargets = [];
+    bGroup3d.traverse(function(o){
+      if(o.isMesh && o.geometry && o.geometry.type === 'PlaneGeometry'){
+        floorTargets.push(o);
+      }
+    });
     return;
   }
 
@@ -1564,48 +1457,60 @@ function handleTap3D(e){
     obj = obj.parent;
     depth++;
   }
-  if(!obj || !obj.userData.type){
-    console.log('[tap] hit object but no type', hits[0].object);
-    toast('عنصر غير معروف');
+  if(!obj || !obj.userData.type) return;
+
+  var ud = obj.userData;
+
+  if(ud.type === 'wallComp'){
+    var comp = ud.comp;
+    if(!powerOn || true){
+      /* menu: edit / delete / toggle */
+      var html = '<p style="color:#8899aa;font-size:12px;margin-bottom:10px">' + comp.name + '</p>';
+      html += '<label>الحالة</label>';
+      html += '<select id="cpState"><option value="1"' + (comp.on !== false ? ' selected' : '') + '>مفعّل</option><option value="0"' + (comp.on === false ? ' selected' : '') + '>معطّل</option></select>';
+      html += '<label>الارتفاع (م)</label><input id="cpH" type="number" step="0.05" value="' + comp.h.toFixed(2) + '">';
+      openModal('المكوّن', html, function(){
+        comp.h = +document.getElementById('cpH').value;
+        comp.on = document.getElementById('cpState').value === '1';
+        closeModal();
+        build3D();
+        if(PROJ.panels.length) rebuildWires3D();
+      });
+      var actions = document.querySelector('.modal-actions');
+      var del = document.createElement('button');
+      del.textContent = '🗑'; del.className = 'btn-del';
+      del.onclick = function(){
+        var face = ud.wall.faces[String(comp.side)];
+        if(face) face.components = face.components.filter(function(x){ return x !== comp; });
+        closeModal();
+        build3D();
+        if(PROJ.panels.length) rebuildWires3D();
+      };
+      actions.insertBefore(del, actions.firstChild);
+    }
     return;
   }
 
-  var ud = obj.userData;
-  console.log('[tap] hit type:', ud.type);
-
-  if(ud.type === 'wallComp' || ud.type === 'ceilComp'){
-    var comp = ud.comp;
-    var html = '<p style="color:#8899aa;font-size:12px;margin-bottom:10px">' + (comp.name || 'مكوّن') + '</p>';
-    html += '<label>الحالة</label>';
-    html += '<select id="cpState">';
-    html += '<option value="1"' + (comp.on !== false ? ' selected' : '') + '>مفعّل</option>';
-    html += '<option value="0"' + (comp.on === false ? ' selected' : '') + '>معطّل</option>';
-    html += '</select>';
-    html += '<label>الارتفاع (م)</label>';
-    html += '<input id="cpH" type="number" step="0.05" value="' + comp.h.toFixed(2) + '">';
-    openModal(comp.name || 'مكوّن', html, function(){
-      comp.h = +document.getElementById('cpH').value;
-      comp.on = document.getElementById('cpState').value === '1';
+  if(ud.type === 'ceilComp'){
+    var comp2 = ud.comp;
+    var html2 = '<p style="color:#8899aa;font-size:12px;margin-bottom:10px">' + comp2.name + '</p>';
+    html2 += '<label>الحالة</label>';
+    html2 += '<select id="ccState"><option value="1"' + (comp2.on !== false ? ' selected' : '') + '>مفعّل</option><option value="0"' + (comp2.on === false ? ' selected' : '') + '>معطّل</option></select>';
+    openModal('السقف', html2, function(){
+      comp2.on = document.getElementById('ccState').value === '1';
       closeModal();
       build3D();
-      if(PROJ.panels.length) rebuildWires3D();
     });
-    var actions = document.querySelector('.modal-actions');
-    var del = document.createElement('button');
-    del.textContent = '🗑';
-    del.className = 'btn-del';
-    del.onclick = function(){
-      if(ud.type === 'wallComp'){
-        var face = ud.wall.faces[String(comp.side)];
-        if(face) face.components = face.components.filter(function(x){ return x !== comp; });
-      } else {
-        ud.room.ceilingComponents = (ud.room.ceilingComponents || []).filter(function(x){ return x !== comp; });
-      }
+    var actions2 = document.querySelector('.modal-actions');
+    var del2 = document.createElement('button');
+    del2.textContent = '🗑'; del2.className = 'btn-del';
+    del2.onclick = function(){
+      ud.room.ceilingComponents = (ud.room.ceilingComponents || []).filter(function(x){ return x !== comp2; });
       closeModal();
       build3D();
       if(PROJ.panels.length) rebuildWires3D();
     };
-    actions.insertBefore(del, actions.firstChild);
+    actions2.insertBefore(del2, actions2.firstChild);
     return;
   }
 
@@ -1618,9 +1523,6 @@ function handleTap3D(e){
     var side = proj >= 0 ? 1 : -1;
     if(typeof openWallEditor === 'function'){
       openWallEditor(w, side);
-      toast('فتح محرر الحائط');
-    } else {
-      toast('محرر الحائط غير متاح', 'warn');
     }
     return;
   }
@@ -1628,9 +1530,6 @@ function handleTap3D(e){
   if(ud.type === 'ceiling'){
     if(typeof openCeilEditor === 'function'){
       openCeilEditor(ud.room, ud.floor);
-      toast('فتح محرر السقف');
-    } else {
-      toast('محرر السقف غير متاح', 'warn');
     }
     return;
   }

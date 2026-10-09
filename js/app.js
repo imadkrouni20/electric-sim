@@ -571,6 +571,10 @@ function boot(){
 
   renderProjectsList();
 
+  /* init editors */
+  if(typeof initWallEditor === 'function') initWallEditor();
+  if(typeof initCeilEditor === 'function') initCeilEditor();
+
   /* auto-open last project */
   var last = getLastProjectId();
   if(last){

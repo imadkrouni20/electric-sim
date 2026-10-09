@@ -115,17 +115,12 @@ function updateCam3d(){
 }
 
 function toggleCam3d(){
-  if(!PROJ) return;
   if(camMode3d === 'orbit'){
     camMode3d = 'walk';
-    var btn = document.getElementById('camBtn');
-    if(btn) btn.textContent = '\uD83D\uDEB6';
-    var jl = document.getElementById('joyL');
-    var jr = document.getElementById('joyR');
-    if(jl){ jl.classList.add('show'); jl.style.display = 'flex'; }
-    if(jr){ jr.classList.add('show'); jr.style.display = 'flex'; }
-    var ex = document.getElementById('exitWalk');
-    if(ex) ex.classList.add('show');
+    document.getElementById('camBtn').textContent = '🚶';
+    document.getElementById('joyL').style.display = 'flex';
+    document.getElementById('joyR').style.display = 'flex';
+    document.getElementById('exitWalk').classList.add('show');
     walk3d.pos.set(
       PROJ.building.length / 2,
       floorView3d * PROJ.building.height + 1.65,
@@ -133,18 +128,12 @@ function toggleCam3d(){
     );
     walk3d.yaw = 0;
     walk3d.pitch = 0;
-    if(typeof toast === 'function') toast('\uD83D\uDEB6 وضع المشي');
   } else {
     camMode3d = 'orbit';
-    var btn2 = document.getElementById('camBtn');
-    if(btn2) btn2.textContent = '\uD83C\uDFA5';
-    var jl2 = document.getElementById('joyL');
-    var jr2 = document.getElementById('joyR');
-    if(jl2){ jl2.classList.remove('show'); jl2.style.display = 'none'; }
-    if(jr2){ jr2.classList.remove('show'); jr2.style.display = 'none'; }
-    var ex2 = document.getElementById('exitWalk');
-    if(ex2) ex2.classList.remove('show');
-    if(typeof toast === 'function') toast('\uD83C\uDFA5 وضع الدوران');
+    document.getElementById('camBtn').textContent = '🎥';
+    document.getElementById('joyL').style.display = 'none';
+    document.getElementById('joyR').style.display = 'none';
+    document.getElementById('exitWalk').classList.remove('show');
   }
   updateCam3d();
 }
@@ -313,31 +302,6 @@ function setupKeyboard3D(){
 }
 
 /* ==================== Part B — Build Building ==================== */
-
-function buildFurniture3D(fd){
-  var T = THREE;
-  var floorY = fd.level * PROJ.building.height;
-  fd.rooms.forEach(function(room){
-    room.furniture.forEach(function(fn){
-      var geo = new T.BoxGeometry(fn.w, 0.5, fn.h);
-      var mat = new T.MeshPhongMaterial({
-        color: hexToInt(fn.color || '#a08060'),
-        shininess: 20
-      });
-      var mesh = new T.Mesh(geo, mat);
-      var roomCenterX = room.x + room.w / 2;
-      var roomCenterZ = room.y + room.h / 2;
-      var fx = fn.x + fn.w / 2 - roomCenterX;
-      var fz = fn.y + fn.h / 2 - roomCenterZ;
-      mesh.position.set(fx, floorY + 0.25, fz);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.userData = { type: 'furniture', furniture: fn, room: room, floor: fd.level };
-      bGroup3d.add(mesh);
-    });
-  });
-}
-
 function build3D(){
   if(!bGroup3d || !THREE || !PROJ) return;
   while(bGroup3d.children.length){
@@ -426,9 +390,6 @@ function build3D(){
     fd.stairs.forEach(function(s){
       addStair3D(s, fd.level);
     });
-
-    /* furniture */
-    buildFurniture3D(fd);
   }
 
   /* components 3D */
@@ -1385,38 +1346,16 @@ function toggleMainPower(){
   if(btn) btn.classList.toggle('on', powerOn);
   if(PROJ) PROJ._powerOn = powerOn;
 
+  /* update all light emissives */
+  applyPowerState();
+
   if(powerOn){
-    if(wireMeshes3d.length > 0){
-      spawnCurrentDots3D();
-    } else {
-      if(PROJ.panels.length && PROJ.panels[0].circuits.length){
-        rebuildWires3D();
-      }
-    }
-    if(typeof toast === 'function') toast('\u26A1 التيار يعمل');
+    spawnCurrentDots3D();
+    toast('⚡ التيار يعمل');
   } else {
     clearCurrentDots3D();
-    if(typeof toast === 'function') toast('\u23FB التيار مقطوع');
+    toast('⏻ التيار مقطوع');
   }
-
-  /* تحديث الإضاءة */
-  comps3d.forEach(function(obj){
-    obj.traverse(function(child){
-      if(child.isMesh && child.material && child.material.emissive){
-        if(child.userData.isBulb){
-          child.material.emissiveIntensity = powerOn ? 1 : 0.05;
-        }
-      }
-    });
-  });
-  lightSources.forEach(function(light){
-    if(light.type === 'PointLight'){
-      if(light.userData.origIntensity === undefined){
-        light.userData.origIntensity = light.intensity;
-      }
-      light.intensity = powerOn ? light.userData.origIntensity : 0.02;
-    }
-  });
 }
 
 function applyPowerState(){

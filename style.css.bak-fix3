@@ -66,11 +66,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,'SF Pro','Segoe 
 .face-tab.active{background:linear-gradient(135deg,#00d9ff,#0088cc);color:#000;box-shadow:0 4px 16px rgba(0,217,255,0.4)}
 
 /* ===== Joysticks ===== */
-.joy{position:fixed!important;bottom:110px;width:120px;height:120px;border-radius:50%;background:rgba(0,217,255,0.15);border:3px solid rgba(0,217,255,0.5);display:none;z-index:9999!important;touch-action:none;align-items:center;justify-content:center;backdrop-filter:blur(12px);box-shadow:0 0 30px rgba(0,217,255,0.4)}
-.joy.show{display:flex!important}
+.joy{position:absolute;bottom:90px;width:110px;height:110px;border-radius:50%;background:rgba(0,217,255,0.08);border:2px solid rgba(0,217,255,0.3);display:none;z-index:15;touch-action:none;align-items:center;justify-content:center;backdrop-filter:blur(10px)}
 #joyL{left:16px}
 #joyR{right:16px;background:rgba(255,149,0,0.08);border-color:rgba(255,149,0,0.3)}
-.joyK,.joyK2{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#00d9ff,#0088cc);pointer-events:none;box-shadow:0 4px 20px rgba(0,217,255,0.7)}
+.joyK,.joyK2{width:50px;height:50px;border-radius:50%;background:linear-gradient(135deg,#00d9ff,#0088cc);pointer-events:none;box-shadow:0 4px 16px rgba(0,217,255,0.5)}
 #joyR .joyK2{background:linear-gradient(135deg,#ff9500,#cc6600);box-shadow:0 4px 16px rgba(255,149,0,0.5)}
 #exitWalk{position:absolute;top:14px;right:14px;width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,#ff2b2b,#cc0000);font-size:20px;display:none;z-index:16;padding:0;color:#fff;border:none;cursor:pointer}
 #exitWalk.show{display:flex;align-items:center;justify-content:center}
